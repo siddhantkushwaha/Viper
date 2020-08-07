@@ -6,7 +6,7 @@ HERE = pathlib.Path(__file__).parent
 README = (HERE / "README.md").read_text()
 
 setup(
-    name='viper',
+    name='viper-python',
     packages=['viper'],
     version='0.1.0',
     license='MIT',
