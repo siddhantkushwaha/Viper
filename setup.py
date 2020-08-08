@@ -8,13 +8,13 @@ README = (HERE / "README.md").read_text()
 setup(
     name='viper-python',
     packages=['viper'],
-    version='0.1.1',
+    version='0.1.2',
     license='MIT',
     description='Common utility functions.',
     author='Siddhant Kushwaha',
     author_email='k16.siddhant@gmail.com',
     url='https://github.com/siddhantkushwaha/viper',
-    download_url='https://github.com/siddhantkushwaha/viper/archive/0.1.1.tar.gz',
+    download_url='https://github.com/siddhantkushwaha/viper/archive/0.1.2.tar.gz',
     keywords=['DOWNLOAD', 'PARALLEL', 'CONCURRENT'],
     install_requires=[
         'requests',
