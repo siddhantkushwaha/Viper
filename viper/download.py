@@ -7,7 +7,15 @@ import requests
 from viper.flash import flash
 
 
-def download(link, path, filename=None, parallel=True, headers=None):
+def download(
+        link,
+        path,
+        filename=None,
+        parallel=True,
+        headers=None,
+        chunk_size=1024 * 1024 * 2,
+        max_workers=512
+):
     response = requests.get(link, stream=True, headers=headers)
 
     filename = re.findall(r'filename=(\s+)', response.headers['Content-Disposition'])[0].strip(' ').strip(
@@ -24,7 +32,6 @@ def download(link, path, filename=None, parallel=True, headers=None):
             print('File supports parallel downloads')
 
             partial_dir = os.path.join(path, f'{filename}_partial')
-            chunk_size = 1024 * 1024 * 2
 
             start = 0
 
@@ -36,11 +43,10 @@ def download(link, path, filename=None, parallel=True, headers=None):
                 chunk_args.append((f'chunk_{start}_{end}', {'Range': f'bytes={start}-{end}'}))
                 start += expected_chunk_size
 
-            num_workers = min(total_size // chunk_size, 512)
             flash(
                 fn=lambda p: download(link, partial_dir, filename=p[0], parallel=False, headers=p[1]),
                 args=chunk_args,
-                max_workers=num_workers
+                max_workers=max_workers
             )
 
             fp1 = open(os.path.join(path, filename), 'wb')
@@ -67,5 +73,8 @@ def download(link, path, filename=None, parallel=True, headers=None):
 
 
 if __name__ == '__main__':
-    download('https://file-examples-com.github.io/uploads/2017/04/file_example_MP4_1920_18MG.mp4', 'downloads',
-             'test.mp4')
+    download(
+        'https://file-examples-com.github.io/uploads/2017/04/file_example_MP4_1920_18MG.mp4',
+        'downloads',
+        'test.mp4'
+    )
