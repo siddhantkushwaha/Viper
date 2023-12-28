@@ -13,68 +13,89 @@ def download(
         filename=None,
         parallel=True,
         headers=None,
-        chunk_size=1024 * 1024 * 2,
-        max_workers=512
+        max_workers=8
 ):
+    is_chunk_file = False
+
+    # If chunk already exists and valid, save any kind of computation or io
+    chunk_file_name_preset = 'downloaded_chunk_file'
+    if filename is not None and filename.startswith(chunk_file_name_preset):
+        is_chunk_file = True
+        expected_chunk_size = int(filename.split('_')[4]) - int(filename.split('_')[3]) + 1
+        chunk_path = os.path.join(path, filename)
+        if (os.path.exists(chunk_path) and os.path.isfile(chunk_path)
+                and os.stat(chunk_path).st_size == expected_chunk_size):
+            return chunk_path
+
     response = requests.get(link, stream=True, headers=headers)
 
-    filename = re.findall(r'filename=(\s+)', response.headers['Content-Disposition'])[0].strip(' ').strip(
-        '"') if filename is None else filename
-    total_size = int(response.headers.get('content-length', 0))
+    if filename is None:
+        filename = re.findall(r'filename=(\s+)', response.headers['Content-Disposition'])[0].strip(' ').strip('"')
 
     file_path = os.path.join(path, filename)
-    if os.path.exists(file_path) and os.path.isfile(file_path) and os.stat(file_path).st_size == total_size:
-        print('Download skipped.')
-        return
+    total_size = int(response.headers.get('content-length', 0))
 
-    if parallel:
-        if 'bytes' in response.headers.get('accept-ranges', 'None'):
-            print('File supports parallel downloads')
+    start = 0
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        start = os.stat(file_path).st_size
 
-            partial_dir = os.path.join(path, f'{filename}_partial')
+    if start >= total_size:
+        return file_path
 
-            start = 0
+    accepts_range = 'bytes' in response.headers.get('accept-ranges', 'None') or is_chunk_file
+    if parallel and accepts_range:
+        partial_dir = os.path.join(path, f'{filename}_partial')
 
-            chunk_args = []
+        chunk_size = max(total_size // max_workers, 10485760)
+        chunk_args = []
 
-            while start < total_size:
-                end = min(start + chunk_size - 1, total_size - 1)
-                expected_chunk_size = (end - start) + 1
-                chunk_args.append((f'chunk_{start}_{end}', {'Range': f'bytes={start}-{end}'}))
-                start += expected_chunk_size
+        while start < total_size:
+            end = min(start + chunk_size - 1, total_size - 1)
+            expected_chunk_size = (end - start) + 1
+            chunk_name = f'{chunk_file_name_preset}_{start}_{end}'
+            chunk_args.append((chunk_name, {'Range': f'bytes={start}-{end}'}))
+            start += expected_chunk_size
 
-            flash(
-                fn=lambda p: download(link, partial_dir, filename=p[0], parallel=False, headers=p[1]),
-                args=chunk_args,
-                max_workers=max_workers
-            )
+            # break
 
-            fp1 = open(os.path.join(path, filename), 'wb')
-            for chunk_name, _ in chunk_args:
-                fp2 = open(os.path.join(partial_dir, chunk_name), 'rb')
-                fp1.write(fp2.read())
-                fp2.close()
-            fp1.close()
+        flash(
+            fn=lambda p: download(link, partial_dir, filename=p[0], parallel=False, headers=p[1]),
+            args=chunk_args,
+            max_workers=max_workers
+        )
 
-            shutil.rmtree(partial_dir)
+        fp1 = open(os.path.join(path, filename), 'wb')
+        for chunk_name, _ in chunk_args:
+            fp2 = open(os.path.join(partial_dir, chunk_name), 'rb')
+            fp1.write(fp2.read())
+            fp2.close()
+        fp1.close()
 
-        else:
-            download(link, path, filename, parallel=False)
+        shutil.rmtree(partial_dir)
     else:
-        print('Saving at:', file_path)
         os.makedirs(path, exist_ok=True)
+        block_size = 4096
 
-        block_size = 1024
-        with open(file_path, 'wb') as file:
+        write_mode = 'wb'
+        if start > 0 and accepts_range:
+            end = total_size
+            if is_chunk_file:
+                start = start + int(filename.split('_')[3])
+                end = int(filename.split('_')[4])
+            write_mode = 'ab'
+            response = requests.get(link, stream=True, headers={'Range': f'bytes={start}-{end}'})
+
+        with open(file_path, write_mode) as file:
             for data in response.iter_content(block_size):
                 file.write(data)
 
-    return filename
+    return file_path
 
 
 if __name__ == '__main__':
     download(
-        'https://file-examples-com.github.io/uploads/2017/04/file_example_MP4_1920_18MG.mp4',
+        'http://some/link',
         'downloads',
-        'test.mp4'
+        parallel=True,
+        filename='test.mp4'
     )
