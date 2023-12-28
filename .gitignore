@@ -2,3 +2,5 @@ dist
 downloads
 viper_python.egg-info
 **logs
+.idea
+**__pycache__

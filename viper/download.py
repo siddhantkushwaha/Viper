@@ -56,8 +56,6 @@ def download(
             chunk_args.append((chunk_name, {'Range': f'bytes={start}-{end}'}))
             start += expected_chunk_size
 
-            # break
-
         flash(
             fn=lambda p: download(link, partial_dir, filename=p[0], parallel=False, headers=p[1]),
             args=chunk_args,
