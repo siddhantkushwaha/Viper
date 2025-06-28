@@ -1,99 +1,142 @@
 import os
 import re
 import shutil
-
+from threading import Lock, Thread
 import requests
-
+import time
 from viper.flash import flash
 
 
+NETWORK_ITER_SIZE = 1024 * 1024 * 4 # 4 MB
+LOCAL_COPY_BUFFER_SIZE = 1024 * 1024 * 20 # 20 MB
+DEFAULT_CHUNK_SIZE = 1024 * 1024 * 200 # 200 MB
+DEFAULT_MAX_WORKERS = 4
+
+def merge(src_paths, dest_path):
+    if len(src_paths) > 1:
+        with open(dest_path, 'wb') as dest_file:
+            for src_path in src_paths:
+                with open(src_path, 'rb') as src_file:
+                    shutil.copyfileobj(src_file, dest_file, length=LOCAL_COPY_BUFFER_SIZE)
+                    os.remove(src_path)
+    elif src_paths[0] != dest_path:
+        shutil.move(src_paths[0], dest_path)
+
+
+def download_chunk(file_path, range, link, supports_range, state, state_lock):
+    current_file_size = os.stat(file_path).st_size if os.path.exists(file_path) else 0
+
+    start, end = range
+    if current_file_size > 0:
+        start += current_file_size
+        with state_lock:
+            state[1] += current_file_size
+
+    if end < start:
+        return
+    
+    new_headers = {}
+    new_headers['Range'] = f'bytes={start}-{end}' if start < end else ''
+
+    response = requests.get(link, stream=True, headers=new_headers)
+
+    open_mode = 'ab' if supports_range else 'wb'
+
+    with open(file_path, open_mode) as file:
+        for data in response.iter_content(NETWORK_ITER_SIZE):
+            file.write(data)
+            with state_lock:
+                state[1] += len(data)
+
+
+def progress_thread(state, state_lock, use_bar=False):
+    while True:
+        with state_lock:
+            total_downloaded = state[1]
+            total_expected = state[0]
+        
+        if use_bar:
+            progress = (total_downloaded / total_expected) * 100
+            bar_length = 50
+            filled_length = int(bar_length * progress // 100)
+            bar = '=' * filled_length + '-' * (bar_length - filled_length)
+            print(f'\rProgress: |{bar}| {progress:.2f}%', end='', flush=True)
+        else:
+            mb_downloaded = total_downloaded / (1024 * 1024)
+            mb_expected = total_expected / (1024 * 1024)
+            percent = (total_downloaded / total_expected) * 100 if total_expected > 0 else 0
+            print(f'Downloaded {mb_downloaded:.2f} MB of {mb_expected:.2f} MB. {percent:.2f}% complete')
+
+        if total_downloaded >= total_expected:
+            print()
+            break
+
+        time.sleep(0.1)
+        
+
 def download(
         link,
-        path,
+        dir_path,
         filename=None,
         parallel=True,
-        headers=None,
-        max_workers=8
+        chunk_size=DEFAULT_CHUNK_SIZE,
+        max_workers=DEFAULT_MAX_WORKERS,
+        use_bar=False
 ):
-    is_chunk_file = False
-
-    # If chunk already exists and valid, save any kind of computation or io
-    chunk_file_name_preset = 'downloaded_chunk_file'
-    if filename is not None and filename.startswith(chunk_file_name_preset):
-        is_chunk_file = True
-        expected_chunk_size = int(filename.split('_')[4]) - int(filename.split('_')[3]) + 1
-        chunk_path = os.path.join(path, filename)
-        if (os.path.exists(chunk_path) and os.path.isfile(chunk_path)
-                and os.stat(chunk_path).st_size == expected_chunk_size):
-            return chunk_path
-
-    response = requests.get(link, stream=True, headers=headers)
+    response = requests.get(link, stream=True)
 
     if filename is None:
-        filename = re.findall(r'filename=(\s+)', response.headers['Content-Disposition'])[0].strip(' ').strip('"')
+        filename = re.findall(r'filename=(\s+)', response.headers['Content-Disposition'])[0].strip(' ').strip('"') 
 
-    file_path = os.path.join(path, filename)
     total_size = int(response.headers.get('content-length', 0))
+    
+    file_path = os.path.join(dir_path, filename)
 
-    start = 0
-    if os.path.exists(file_path) and os.path.isfile(file_path):
-        start = os.stat(file_path).st_size
+    partial_dir = os.path.join(dir_path, f'{filename}_partial')
+    os.makedirs(partial_dir, exist_ok=True)
 
-    if start >= total_size:
-        return file_path
-
-    accepts_range = 'bytes' in response.headers.get('accept-ranges', 'None') or is_chunk_file
-    if parallel and accepts_range:
-        partial_dir = os.path.join(path, f'{filename}_partial')
-
-        chunk_size = max(total_size // max_workers, 10485760)
-        chunk_args = []
-
+    chunk_args = []
+    supports_range = 'bytes' in response.headers.get('accept-ranges', 'None')
+    if supports_range and parallel:
+        start = 0
         while start < total_size:
             end = min(start + chunk_size - 1, total_size - 1)
             expected_chunk_size = (end - start) + 1
-            chunk_name = f'{chunk_file_name_preset}_{start}_{end}'
-            chunk_args.append((chunk_name, {'Range': f'bytes={start}-{end}'}))
+            chunk_name = f'chunk_{start}_{end}'
+            chunk_path = os.path.join(partial_dir, chunk_name)
+            chunk_range = (start, end)
+            chunk_args.append((chunk_path, chunk_range))
             start += expected_chunk_size
-
-        flash(
-            fn=lambda p: download(link, partial_dir, filename=p[0], parallel=False, headers=p[1]),
-            args=chunk_args,
-            max_workers=max_workers
-        )
-
-        fp1 = open(os.path.join(path, filename), 'wb')
-        for chunk_name, _ in chunk_args:
-            fp2 = open(os.path.join(partial_dir, chunk_name), 'rb')
-            fp1.write(fp2.read())
-            fp2.close()
-        fp1.close()
-
-        shutil.rmtree(partial_dir)
     else:
-        os.makedirs(path, exist_ok=True)
-        block_size = 4096
+        chunk_range = (0, total_size - 1)
+        chunk_args.append((file_path, chunk_range))
 
-        write_mode = 'wb'
-        if start > 0 and accepts_range:
-            end = total_size
-            if is_chunk_file:
-                start = start + int(filename.split('_')[3])
-                end = int(filename.split('_')[4])
-            write_mode = 'ab'
-            response = requests.get(link, stream=True, headers={'Range': f'bytes={start}-{end}'})
+    state = [total_size, 0]
+    state_lock = Lock()
 
-        with open(file_path, write_mode) as file:
-            for data in response.iter_content(block_size):
-                file.write(data)
-
-    return file_path
-
-
-if __name__ == '__main__':
-    download(
-        'http://some/link',
-        'downloads',
-        parallel=True,
-        filename='test.mp4'
+    flash(
+        fn=lambda arg: download_chunk(arg[0], arg[1], link, supports_range, state, state_lock),
+        args=chunk_args,
+        max_workers=max_workers
     )
+
+    progress_th = Thread(target=progress_thread, args=(state, state_lock, use_bar))
+    progress_th.start()
+    progress_th.join()
+
+    chunk_paths = [chunk_path for chunk_path, _ in chunk_args]
+    merge(chunk_paths, file_path)
+
+    shutil.rmtree(partial_dir)
+    size = os.stat(file_path).st_size
+    return file_path, size == total_size
+
+    
+if __name__ == '__main__':
+    print(download(
+        '',
+        '',
+        '',
+        parallel=True,
+        use_bar=False
+    ))
