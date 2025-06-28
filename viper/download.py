@@ -7,7 +7,7 @@ import time
 from viper.flash import flash
 
 
-NETWORK_ITER_SIZE = 1024 * 1024 * 4 # 4 MB
+NETWORK_ITER_SIZE = 1024 * 1024 * 1 # 4 MB
 LOCAL_COPY_BUFFER_SIZE = 1024 * 1024 * 20 # 20 MB
 DEFAULT_CHUNK_SIZE = 1024 * 1024 * 200 # 200 MB
 DEFAULT_MAX_WORKERS = 4
@@ -27,6 +27,8 @@ def download_chunk(file_path, range, link, supports_range, state, state_lock):
     current_file_size = os.stat(file_path).st_size if os.path.exists(file_path) else 0
 
     start, end = range
+
+    # If the file already exists and is not empty, adjust the start position
     if current_file_size > 0:
         start += current_file_size
         with state_lock:
@@ -41,7 +43,6 @@ def download_chunk(file_path, range, link, supports_range, state, state_lock):
     response = requests.get(link, stream=True, headers=new_headers)
 
     open_mode = 'ab' if supports_range else 'wb'
-
     with open(file_path, open_mode) as file:
         for data in response.iter_content(NETWORK_ITER_SIZE):
             file.write(data)
@@ -61,19 +62,20 @@ def progress_thread(state, state_lock, use_bar=False):
             filled_length = int(bar_length * progress // 100)
             bar = '=' * filled_length + '-' * (bar_length - filled_length)
             print(f'\rProgress: |{bar}| {progress:.2f}%', end='', flush=True)
+            time.sleep(0.5)
         else:
             mb_downloaded = total_downloaded / (1024 * 1024)
             mb_expected = total_expected / (1024 * 1024)
             percent = (total_downloaded / total_expected) * 100 if total_expected > 0 else 0
+            # print(total_downloaded, total_expected)
             print(f'Downloaded {mb_downloaded:.2f} MB of {mb_expected:.2f} MB. {percent:.2f}% complete')
-
+            time.sleep(2)
+        
         if total_downloaded >= total_expected:
             print()
             break
 
-        time.sleep(0.1)
         
-
 def download(
         link,
         dir_path,
@@ -108,21 +110,22 @@ def download(
             chunk_args.append((chunk_path, chunk_range))
             start += expected_chunk_size
     else:
+        # Single chunk when parallel downloads not supported or not needed
         chunk_range = (0, total_size - 1)
         chunk_args.append((file_path, chunk_range))
 
     state = [total_size, 0]
     state_lock = Lock()
 
+    progress_th = Thread(target=progress_thread, args=(state, state_lock, use_bar))
+    progress_th.start()
+    
+    # Blocking call to download chunks
     flash(
         fn=lambda arg: download_chunk(arg[0], arg[1], link, supports_range, state, state_lock),
         args=chunk_args,
         max_workers=max_workers
     )
-
-    progress_th = Thread(target=progress_thread, args=(state, state_lock, use_bar))
-    progress_th.start()
-    progress_th.join()
 
     chunk_paths = [chunk_path for chunk_path, _ in chunk_args]
     merge(chunk_paths, file_path)
@@ -133,10 +136,13 @@ def download(
 
     
 if __name__ == '__main__':
-    print(download(
-        '',
-        '',
-        '',
+    link = ''
+    path = 'data'
+    filename = 'test'
+    pt, _ = download(
+        link=link,
+        dir_path=path,
+        filename=filename,
         parallel=True,
-        use_bar=False
-    ))
+        use_bar=True
+    )
