@@ -1,16 +1,18 @@
 import os
 import re
 import shutil
-from threading import Lock, Thread
-import requests
 import time
+from threading import Lock, Thread
+
+import requests
+
 from viper.flash import flash
 
-
-NETWORK_ITER_SIZE = 1024 * 1024 * 8 # 8 MB
-LOCAL_COPY_BUFFER_SIZE = 1024 * 1024 * 20 # 20 MB
-DEFAULT_CHUNK_SIZE = 1024 * 1024 * 200 # 200 MB
+NETWORK_ITER_SIZE = 1024 * 1024 * 8  # 8 MB
+LOCAL_COPY_BUFFER_SIZE = 1024 * 1024 * 20  # 20 MB
+DEFAULT_CHUNK_SIZE = 1024 * 1024 * 200  # 200 MB
 DEFAULT_MAX_WORKERS = 4
+
 
 def merge(src_paths, dest_path):
     if len(src_paths) > 1:
@@ -36,7 +38,7 @@ def download_chunk(file_path, range, link, supports_range, state, state_lock):
 
     if end < start:
         return
-    
+
     new_headers = {}
     new_headers['Range'] = f'bytes={start}-{end}' if start < end else ''
 
@@ -55,7 +57,7 @@ def progress_thread(state, state_lock, use_bar=False):
         with state_lock:
             total_downloaded = state[1]
             total_expected = state[0]
-        
+
         if use_bar:
             progress = (total_downloaded / total_expected) * 100
             bar_length = 50
@@ -70,12 +72,12 @@ def progress_thread(state, state_lock, use_bar=False):
             # print(total_downloaded, total_expected)
             print(f'Downloaded {mb_downloaded:.2f} MB of {mb_expected:.2f} MB. {percent:.2f}% complete')
             time.sleep(2)
-        
+
         if total_downloaded >= total_expected:
             print()
             break
 
-        
+
 def download(
         link,
         dir_path,
@@ -88,10 +90,10 @@ def download(
     response = requests.get(link, stream=True)
 
     if filename is None:
-        filename = re.findall(r'filename=(\s+)', response.headers['Content-Disposition'])[0].strip(' ').strip('"') 
+        filename = re.findall(r'filename=(\s+)', response.headers['Content-Disposition'])[0].strip(' ').strip('"')
 
     total_size = int(response.headers.get('content-length', 0))
-    
+
     file_path = os.path.join(dir_path, filename)
 
     partial_dir = os.path.join(dir_path, f'{filename}_partial')
@@ -119,7 +121,7 @@ def download(
 
     progress_th = Thread(target=progress_thread, args=(state, state_lock, use_bar))
     progress_th.start()
-    
+
     # Blocking call to download chunks
     flash(
         fn=lambda arg: download_chunk(arg[0], arg[1], link, supports_range, state, state_lock),
@@ -134,15 +136,17 @@ def download(
     size = os.stat(file_path).st_size
     return file_path, size == total_size
 
-    
+
+def run():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--link', type=str, required=True, help='Link to download from.')
+    parser.add_argument('--filename', type=str, default=None, help='Name of file to download.')
+    parser.add_argument('--parallel', type=bool, default=False, help='Multi threaded download.')
+    args = parser.parse_args()
+    download(link=args.link, dir_path=os.getcwd(), parallel=args.parallel, use_bar=True, filename=args.filename)
+
+
 if __name__ == '__main__':
-    link = ''
-    path = 'data'
-    filename = 'test'
-    pt, _ = download(
-        link=link,
-        dir_path=path,
-        filename=filename,
-        parallel=True,
-        use_bar=True
-    )
+    run()
