@@ -5,17 +5,20 @@ File-based locking mechanism.
 Takes lock_name and lock_dir as arguments.
 """
 
-import os
-import sys
 import atexit
+import os
 import signal
+import sys
+import tempfile
 import time
+
+_temp_dir = tempfile.gettempdir()
 
 
 class FileLock:
     """A file-based locking mechanism to prevent multiple instances of a process"""
 
-    def __init__(self, lock_name, lock_dir="/tmp"):
+    def __init__(self, lock_name, lock_dir=_temp_dir):
         """
         Initialize the file lock
 

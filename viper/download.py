@@ -22,7 +22,7 @@ def merge(src_paths, dest_path):
                     shutil.copyfileobj(
                         src_file, dest_file, length=LOCAL_COPY_BUFFER_SIZE
                     )
-                    os.remove(src_path)
+                os.remove(src_path)
     elif src_paths[0] != dest_path:
         shutil.move(src_paths[0], dest_path)
 
@@ -41,9 +41,7 @@ def download_chunk(file_path, range, link, supports_range, state, state_lock):
     if end < start:
         return
 
-    new_headers = {}
-    new_headers["Range"] = f"bytes={start}-{end}" if start < end else ""
-
+    new_headers = {"Range": f"bytes={start}-{end}" if start < end else ""}
     response = requests.get(link, stream=True, headers=new_headers)
 
     open_mode = "ab" if supports_range else "wb"
@@ -73,7 +71,6 @@ def progress_thread(state, state_lock, use_bar=False):
             percent = (
                 (total_downloaded / total_expected) * 100 if total_expected > 0 else 0
             )
-            # print(total_downloaded, total_expected)
             print(
                 f"Downloaded {mb_downloaded:.2f} MB of {mb_expected:.2f} MB. {percent:.2f}% complete"
             )
@@ -85,13 +82,13 @@ def progress_thread(state, state_lock, use_bar=False):
 
 
 def download(
-    link,
-    dir_path,
-    filename=None,
-    parallel=True,
-    chunk_size=DEFAULT_CHUNK_SIZE,
-    max_workers=DEFAULT_MAX_WORKERS,
-    use_bar=False,
+        link,
+        dir_path,
+        filename=None,
+        parallel=True,
+        chunk_size=DEFAULT_CHUNK_SIZE,
+        max_workers=DEFAULT_MAX_WORKERS,
+        use_bar=False,
 ):
     response = requests.get(link, stream=True)
 
@@ -106,9 +103,9 @@ def download(
     file_path = os.path.join(dir_path, filename)
 
     already_exists = (
-        os.path.exists(file_path)
-        and os.path.isfile(file_path)
-        and os.stat(file_path) == total_size
+            os.path.exists(file_path)
+            and os.path.isfile(file_path)
+            and os.stat(file_path) == total_size
     )
 
     partial_dir = os.path.join(dir_path, f"{filename}_partial")
