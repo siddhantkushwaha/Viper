@@ -7,7 +7,7 @@ README = (HERE / "README.md").read_text()
 setup(
     name='viper-python',
     packages=['viper'],
-    version='1.0.2',
+    version='1.0.4',
     license='MIT',
     description='Common utility functions.',
     author='Siddhant Kushwaha',
