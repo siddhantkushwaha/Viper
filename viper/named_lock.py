@@ -35,7 +35,7 @@ class NamedLock:
         # Thread-level lock specific to this lock_name
         with NamedLock._thread_locks_lock:
             if self.lock_file not in NamedLock._thread_locks:
-                NamedLock._thread_locks[self.lock_file] = threading.Lock()
+                NamedLock._thread_locks[self.lock_file] = threading.RLock()
             self._thread_lock = NamedLock._thread_locks[self.lock_file]
 
         self.acquired = False
